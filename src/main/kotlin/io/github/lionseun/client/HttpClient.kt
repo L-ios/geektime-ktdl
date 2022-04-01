@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.KotlinFeature
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import io.github.lionseun.domain.response.GResponse
-import lombok.SneakyThrows
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -16,7 +15,6 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 open class HttpClient {
-    @SneakyThrows
     open fun <R, S> post(url: String, body: R, respClass: TypeReference<S>): S {
         val requestBody: RequestBody =
             kotlinMapper.writeValueAsBytes(body)
@@ -102,9 +100,6 @@ open class HttpClient {
                         GCESS=BgsCBgAJAQ0HBIzJv0YNAQIFBAAAAAAMAQEBCNYULQAAAAAAAgSfuUFiCgQAAAAABAQALw0ABgS_8o7kAwSfuUFiCAED; 
                     """.trimIndent().replace("\n", "")
                 // GCESS 是验证用的
-                    //
-                //                         gk_process_ev={"referrer":"https://wxtime.geekbang.org/course/intro/100037301?tab=catalog","utime":1648474558535};
-                    //                        SERVERID=1fa1f330efedec1559b3abbcb6e30f50|1648474567|1648474497
                 ).build()
     }
 }

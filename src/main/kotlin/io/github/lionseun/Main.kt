@@ -10,41 +10,31 @@ import org.jsoup.nodes.Document
 import java.io.File
 import java.util.*
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 
 fun main() {
-    var workspace = "d:/temp"
-    var threadpool = Executors.newFixedThreadPool(4);
-    for (productId in listOf<Int>(
-        100104501,100104601,100104301,100103401,100102601,100101501,100101301,100100901,100100701,100099801,100098801,
-        100098901,100097301,100095401,100094901,100093001,100094401,100093501,100093301,100091501,100091101,100109601,
-        100109401,100109201,100108401,100107801,100105701,100104701,100090601,100090001,100085501,100085201,100085301,
-        100085401,100085101,100084801,100084301,100084201,100083301,100082501,100082101,100081901,100081501,100080901,
-        100079601,100079901,100079201,100079101,100078501,100078401,100077001,100076701,100076501,100075401,100074001,
-        100073401,100073301,100073201,100072201,100072001,100071001,100070901,100070801,100069901,100070001,100069101,
-        100068401,100067701,100066601,100066301,100065501,100064501,100064801,100063801,100063601,100062901,100062401,
-        100062001,100061801,100061901,100061401,100060801,100060601,100060501,100059901,100059201,100058801,100058401,
-        100058001,100057701,100057401,100056701,100056401,100056201,100055801,100055601,100055001,100053901,100053801,
-        100053601,100053301,100053201,100052801,100052601,100052401,100052201,100051901,100051801,100051201,100050701,
-        100050201,100050101,100049401,100049101,100048401,100048201,100048001,100047701,100046901,100046801,100046401,
-        100046301,100046201,100046101,100045801,100044601,100044301,100044201,100085801,100043901,100043001,100042601,
-        100042501,100041701,100041101,100040501,100040201,100040001,100039701,100039001,100038501,100038001,100037701,
-        100037301,100036701,100036601,100036501,100036401,100036001,100035801,100035501,100034901,100034501,100034201,
-        100034101,100034001,100033601,100032701,100032301,100032201,100031801,100031401,100031101,100031001,100030701,
-        100030501,100029601,100029501,100029201,100029001,100028901,100028301,100028001,100027801,100027701,100026901,
-        100026801,100026001,100025901,100025301,100025201,100025001,100024701,100024601,100024501,100024001,100023901,
-        100023701,100023501,100023401,100023201,100023001,100019601,100022301,100021701,100021601,100021201,100021101,
-        100020901,100020801,100020301,100020201,100020001,100019701,100017501,100017301,100015201,100014401,100014301,
-        100013101,100012101,100012001,100010301,100009801,100009701,100009601,100009301,100008801,100008701,100007201,
-        100007101,100007001,100006701,100006601,100006501,100006201,100005701,100005101,100003901,100003401,100003101,
-        100002601,100002401,100002201,100002101,100001901
-    )) {
-        var product = productInfo(productId)
-        // extra -> modules type(activity)
-
-        downloader(workspace, product)
+    var workspace = "/data/EData/temp"
+    var productIds = getProductIds()
+    var threadpool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    for (productId in productIds.shuffled()) {
+        threadpool.submit {
+            var product = productInfo(productId)
+            downloader(workspace, product)
+        }
     }
+    threadpool.awaitTermination(3, TimeUnit.DAYS)
+}
+fun getProductIds(): List<Int>{
+    var content = """
+            {"can_bind":0,"goods_name":"","label_id":0,"record_id":1405744,"type":0}P
+
+    """.trimIndent()
+    var resp = HttpClient().post("https://apptime.geekbang.org/api/service/es/vip/column-label-skus", content,
+        object : TypeReference<GResponse<SkuData>>() {})
+    return resp.data.list.sortedBy { it.column_ctime }.reversed().map { it.column_sku }.toList()
+//    return listOf(100023501)
 }
 
 fun downloader(workspace: String, product: ProductInfo) {
@@ -60,7 +50,7 @@ fun downloader(workspace: String, product: ProductInfo) {
             if (oneArticles.hls_videos is Map<*, *>) {
                 m3u8Url = (oneArticles.hls_videos as Map<String, Map<String, *>>).get("sd")!!.get("url").toString()
             }
-            downloadVideo(product.title, oneArticles.article_title, m3u8Url)
+            downloadVideo(productWorkspace, oneArticles.article_title, m3u8Url)
         } else {
             saveArticleContent2xHtml(productWorkspace, product, oneArticles)
         }
@@ -109,6 +99,12 @@ private fun saveProductIntro(workspace: String, product: ProductInfo) {
 }
 
 private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, article: OneArticle ) {
+    var fileName = repaireDirName(article.article_title)
+    if (File("${workspace}/${fileName}.xhtml").exists()) {
+        println("${fileName} has downloaded..")
+        return
+    }
+
     // xhtml 还有一些 img 结束符有问题
     var htmlContent = """
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
@@ -148,7 +144,6 @@ private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, ar
   </style>
 </html>
     """.trimIndent()
-    var fileName = repaireDirName(article.article_title)
     html2xhtml(workspace, htmlContent, fileName)
 }
 
@@ -253,7 +248,7 @@ private fun m3u8(url: String): String? {
 }
 
 private fun repaireDirName(dirName: String): String {
-    return dirName.replace("|", "｜")
+    return dirName.trim().replace("|", "｜")
         .replace(":", "：")
         .replace("*", "＊")
         .replace("?", "？")
@@ -263,9 +258,9 @@ private fun repaireDirName(dirName: String): String {
         .replace("/", "／")
 }
 
-private fun downloadVideo(productName: String, title: String, m3u8Url: String) {
+private fun downloadVideo(productWorkspace: String, title: String, m3u8Url: String) {
     // 使用全角对目录名进行修复 :*?"<>|
-    var baseDir = "d:/temp/" + productName + "/" + repaireDirName(title.replace(" |", "")) + "/"
+    var baseDir ="${productWorkspace}/${repaireDirName(title.replace(" |", ""))}/"
     File(baseDir).mkdirs()
     var m3u8File = File(baseDir + "base.m3u8")
     if (m3u8File.exists() || true) {
