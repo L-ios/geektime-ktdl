@@ -149,10 +149,6 @@ private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, ar
 
 private fun html2xhtml(workspace: String, htmlContent: String, fileName: String) {
     val client = HttpClient()
-    val imgDir = workspace + "/Images"
-    File(imgDir).mkdirs()
-    val audioDir = workspace + "/Audios"
-    File(audioDir).mkdirs()
     val document = Jsoup.parse(htmlContent)
     var fileIndex = AtomicInteger()
 
@@ -162,10 +158,6 @@ private fun html2xhtml(workspace: String, htmlContent: String, fileName: String)
         val downloaded = client.get(imgUrl)
         it.attr("src", "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
         it.attr("origin-src", imgUrl)
-        val imgFileName = "${fileName}-${fileIndex.getAndIncrement()}.jpeg"
-        println("save to ${imgDir}/${imgFileName}")
-        File("${imgDir}/${imgFileName}").writeBytes(downloaded!!)
-        it.attr("local-src", "./Images/${imgFileName}")
     }
 
     fileIndex.set(0)
@@ -175,10 +167,6 @@ private fun html2xhtml(workspace: String, htmlContent: String, fileName: String)
         // 文章名字 + index
         it.attr("src", "data:audio/mpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
         it.attr("origin-src", mp3Url)
-        val audioFileName = "${fileName}-${fileIndex.getAndIncrement()}.mp3"
-        println("save to ${audioDir}/${audioFileName}")
-        File("${audioDir}/${audioFileName}").writeBytes(downloaded!!)
-        it.attr("local-src", "./Audios/${audioFileName}")
     }
 
     File(workspace).mkdirs()
@@ -263,7 +251,7 @@ private fun downloadVideo(productWorkspace: String, title: String, m3u8Url: Stri
     var baseDir ="${productWorkspace}/${repaireDirName(title.replace(" |", ""))}/"
     File(baseDir).mkdirs()
     var m3u8File = File(baseDir + "base.m3u8")
-    if (m3u8File.exists() || true) {
+    if (m3u8File.exists()) {
         return
     }
 
