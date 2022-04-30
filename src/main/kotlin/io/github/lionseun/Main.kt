@@ -28,36 +28,35 @@ fun main() {
 }
 fun getProductIds(): List<Int>{
     var content = """
-            {"can_bind":0,"goods_name":"","label_id":0,"record_id":1405744,"type":0}P
-
+            {"can_bind":0,"goods_name":"","label_id":0,"record_id":1405744,"type":0}
     """.trimIndent()
     var resp = HttpClient().post("https://apptime.geekbang.org/api/service/es/vip/column-label-skus", content,
         object : TypeReference<GResponse<SkuData>>() {})
     return resp.data.list.sortedBy { it.column_ctime }.reversed().map { it.column_sku }.toList()
-//    return listOf(100023501)
+//    return listOf(100008801)
 }
 
 fun downloader(workspace: String, product: ProductInfo) {
     println("start download " + product.id + " ---> " + product.title)
     var productWorkspace = workspace + "/" + repaireDirName(product.title)
-    saveProductIntro(productWorkspace, product)
     var chapters = articles(product.id)
+    saveProductIntro(productWorkspace, product, chapters.data.list)
     for (article2 in chapters.data.list) {
         var oneArticles = oneArticles(article2.id).data
         println("start download " + product.id + " -> " + product.title + " -> " +oneArticles.id + " -> " + oneArticles.article_title)
         if (product.is_video) {
             var m3u8Url = ""
             if (oneArticles.hls_videos is Map<*, *>) {
-                m3u8Url = (oneArticles.hls_videos as Map<String, Map<String, *>>).get("sd")!!.get("url").toString()
+                m3u8Url = (oneArticles.hls_videos as Map<String, Map<String, *>>).get("hd")!!.get("url").toString()
             }
-            downloadVideo(productWorkspace, oneArticles.article_title, m3u8Url)
+            downloadVideo(productWorkspace, oneArticles, m3u8Url)
         } else {
             saveArticleContent2xHtml(productWorkspace, product, oneArticles)
         }
     }
 }
 
-private fun saveProductIntro(workspace: String, product: ProductInfo) {
+private fun saveProductIntro(workspace: String, product: ProductInfo, articles: List<Article2>) {
     val modules = product.extra?.modules
     val content = modules?.joinToString(separator = "\n<hr/>\n", transform = {
         """
@@ -71,36 +70,54 @@ private fun saveProductIntro(workspace: String, product: ProductInfo) {
 
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="cn">
   <head>
+    <meta charset="utf-8">
+    <meta name="renderer" content="webkit">
     <title>${product.title} </title>
+    <style>
+      body {
+        max-width: 800px;
+        margin: 0 auto;
+        font-size: 17px;
+        line-height: 30px;
+      }
+      img {
+        max-width: 100%;
+      }
+      audio {
+        width: 100%;
+      }
+    </style>
   </head>
   <body>
       <h1>${product.title}</h1>
       <br/>
+      <div>
+      <h2>目录</h2>
+      ${buildContentIndex(product, articles)}
+      </div>
       <h1>简介</h1>
       ${content}
   </body>
-  <style>
-    body {
-      max-width: 800px;
-      margin: 0 auto;
-      font-size: 17px;
-      line-height: 30px;
-    }
-    img {
-      max-width: 100%;
-    }
-    audio {
-      width: 100%;
-    }
-  </style>
 </html>
     """.trimIndent()
     html2xhtml(workspace, htmlContent, "index")
 }
 
+private fun buildContentIndex(product: ProductInfo, articles: List<Article2>): String {
+    if (product.is_video) {
+        return articles.map {
+            """<a href="${repaireDirName(it.article_title)}/index.html">${it.article_title}</a>"""
+        }.joinToString("<br/>")
+    } else {
+        return articles.map {
+            """<a href="${repaireDirName(it.article_title)}.html">${it.article_title}</a>"""
+        }.joinToString("<br/>")
+    }
+}
+
 private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, article: OneArticle ) {
     var fileName = repaireDirName(article.article_title)
-    if (File("${workspace}/${fileName}.xhtml").exists()) {
+    if (File("${workspace}/${fileName}.html").exists()) {
         println("${fileName} has downloaded..")
         return
     }
@@ -112,7 +129,23 @@ private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, ar
 
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="cn">
   <head>
+    <meta charset="utf-8">
+    <meta name="renderer" content="webkit">
     <title>${article.article_title} </title>
+    <style>
+      body {
+        max-width: 800px;
+        margin: 0 auto;
+        font-size: 17px;
+        line-height: 30px;
+      }
+      img {
+        max-width: 100%;
+      }
+      audio {
+        width: 100%;
+      }
+    </style>
   </head>
   <body>
       <h1>${article.article_title}</h1>
@@ -128,26 +161,12 @@ private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, ar
       <br/>
       ${article.article_content}
   </body>
-  <style>
-    body {
-      max-width: 800px;
-      margin: 0 auto;
-      font-size: 17px;
-      line-height: 30px;
-    }
-    img {
-      max-width: 100%;
-    }
-    audio {
-      width: 100%;
-    }
-  </style>
 </html>
     """.trimIndent()
     html2xhtml(workspace, htmlContent, fileName)
 }
 
-private fun html2xhtml(workspace: String, htmlContent: String, fileName: String) {
+private fun html2xhtml(workspace: String, htmlContent: String, fileName: String, is_video: Boolean=false) {
     val client = HttpClient()
     val document = Jsoup.parse(htmlContent)
     var fileIndex = AtomicInteger()
@@ -161,18 +180,20 @@ private fun html2xhtml(workspace: String, htmlContent: String, fileName: String)
     }
 
     fileIndex.set(0)
-    document.select("source").forEach {
-        val mp3Url = it.attr("src")
-        val downloaded = client.get(mp3Url)
-        // 文章名字 + index
-        it.attr("src", "data:audio/mpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
-        it.attr("origin-src", mp3Url)
+    if (!is_video) {
+        document.select("source").forEach {
+            val mp3Url = it.attr("src")
+            val downloaded = client.get(mp3Url)
+            // 文章名字 + index
+            it.attr("src", "data:audio/mpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
+            it.attr("origin-src", mp3Url)
+        }
     }
 
     File(workspace).mkdirs()
     document.outputSettings().syntax(Document.OutputSettings.Syntax.xml)
-    println("save to ${workspace}/${fileName}.xhtml")
-    File("${workspace}/${fileName}.xhtml").writeText(document.html())
+    File("${workspace}/${fileName}.html").writeText(document.html())
+    println("save to ${workspace}/${fileName}.html")
 }
 
 private fun productInfo(id: Int): ProductInfo {
@@ -246,9 +267,58 @@ private fun repaireDirName(dirName: String): String {
         .replace("/", "／")
 }
 
-private fun downloadVideo(productWorkspace: String, title: String, m3u8Url: String) {
+private fun videoContent(article: OneArticle) : String{
+    return """
+        <!DOCTYPE html
+          PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="cn">
+
+        <head>
+          <title>${article.article_title}</title>
+          <link href="https://vjs.zencdn.net/7.18.1/video-js.css" rel="stylesheet" />
+          <meta charset="utf-8">
+          <meta name="renderer" content="webkit">
+          <style>
+            body {
+              max-width: 800px;
+              margin: 0 auto;
+              font-size: 17px;
+              line-height: 30px;
+            }
+
+            img {
+              max-width: 100%;
+            }
+          </style>
+        </head>
+
+        <body>
+          <h1>${article.article_title}</h1>
+          <div>
+            <video id="my-video" class="video-js" controls preload="auto" width="800px" data-setup="{}" controls>
+              <source type="application/x-mpegURL" src="base.m3u8">
+              <p class="vjs-no-js">
+                To view this video please enable JavaScript, and consider upgrading to a
+                web browser that
+              </p>
+            </video>
+          </div>
+          <h2>本节摘要</h2>
+          <div>
+            ${article.article_content}
+          </div>
+          <script src="https://vjs.zencdn.net/7.18.1/video.min.js"></script>
+        </body>
+
+        </html>
+    """.trimIndent()
+}
+
+
+private fun downloadVideo(productWorkspace: String, article: OneArticle, m3u8Url: String) {
+    val title = article.article_title
     // 使用全角对目录名进行修复 :*?"<>|
-    var baseDir ="${productWorkspace}/${repaireDirName(title.replace(" |", ""))}/"
+    var baseDir ="${productWorkspace}/${repaireDirName(title)}/"
     File(baseDir).mkdirs()
     var m3u8File = File(baseDir + "base.m3u8")
     if (m3u8File.exists()) {
@@ -271,6 +341,7 @@ private fun downloadVideo(productWorkspace: String, title: String, m3u8Url: Stri
         }
         sb.appendLine(line)
     }
-
+    var htmlContent = videoContent(article)
+    html2xhtml(baseDir, htmlContent, "index", true)
     m3u8File.writeText(sb.toString())
 }
