@@ -16,9 +16,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 open class HttpClient {
     open fun <R, S> post(url: String, body: R, respClass: TypeReference<S>): S {
-        val requestBody: RequestBody =
-            kotlinMapper.writeValueAsBytes(body)
-                .toRequestBody("application/json".toMediaTypeOrNull())
+        var requestBody: RequestBody
+        if (body is String) {
+            requestBody = body.toRequestBody("application/json".toMediaTypeOrNull())
+        } else {
+            requestBody = kotlinMapper.writeValueAsBytes(body).toRequestBody("application/json".toMediaTypeOrNull())
+        }
 
         val request: Request = Request.Builder().url(url).headers(headers).post(requestBody).build()
         val response = client.newCall(request).execute()
@@ -87,7 +90,7 @@ open class HttpClient {
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36 Edg/99.0.1150.46"
                 )
                 .add("Accept", "application/json, text/plain, */*")
-                .add("Origin", "https://wxtime.geekbang.org")
+                .add("Origin", "https://time.geekbang.org")
                 .add(
                     "Cookie",
                     """

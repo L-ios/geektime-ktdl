@@ -4,46 +4,52 @@ import com.fasterxml.jackson.core.type.TypeReference
 import io.github.lionseun.client.HttpClient
 import io.github.lionseun.domain.request.ArticlesRequest
 import io.github.lionseun.domain.request.LearnRequest
+import io.github.lionseun.domain.request.MinProductInfoData
 import io.github.lionseun.domain.response.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.File
 import java.util.*
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.logging.Logger
 
+var logger = Logger.getLogger("geektime_dl")
 
 fun main() {
     var workspace = "/data/EData/temp"
     var productIds = getProductIds()
-    var threadpool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    var threadpool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+    var latch = CountDownLatch(productIds.size)
     for (productId in productIds.shuffled()) {
         threadpool.submit {
+            logger.info("download ${productId}")
             var product = productInfo(productId)
             downloader(workspace, product)
+            latch.countDown()
         }
     }
-    threadpool.awaitTermination(3, TimeUnit.DAYS)
+    latch.await(3, TimeUnit.DAYS)
 }
 fun getProductIds(): List<Int>{
     var content = """
-            {"can_bind":0,"goods_name":"","label_id":0,"record_id":1405744,"type":0}
+        {"label_id":0,"type":0}
     """.trimIndent()
-    var resp = HttpClient().post("https://apptime.geekbang.org/api/service/es/vip/column-label-skus", content,
-        object : TypeReference<GResponse<SkuData>>() {})
-    return resp.data.list.sortedBy { it.column_ctime }.reversed().map { it.column_sku }.toList()
-//    return listOf(100008801)
+    var resp = HttpClient().post("https://time.geekbang.org/serv/v3/lecture/list", content,
+        object : TypeReference<GResponse<MinProductInfoData>>() {})
+    return resp.data.list.filter { it.in_pvip == 1 }.reversed().map { it.pid }.toList()
 }
 
 fun downloader(workspace: String, product: ProductInfo) {
-    println("start download " + product.id + " ---> " + product.title)
+    logger.info("start download " + product.id + " ---> " + product.title)
     var productWorkspace = workspace + "/" + repaireDirName(product.title)
     var chapters = articles(product.id)
     saveProductIntro(productWorkspace, product, chapters.data.list)
     for (article2 in chapters.data.list) {
         var oneArticles = oneArticles(article2.id).data
-        println("start download " + product.id + " -> " + product.title + " -> " +oneArticles.id + " -> " + oneArticles.article_title)
+        logger.info("start download " + product.id + " -> " + product.title + " -> " +oneArticles.id + " -> " + oneArticles.article_title)
         if (product.is_video) {
             var m3u8Url = ""
             if (oneArticles.hls_videos is Map<*, *>) {
@@ -118,7 +124,7 @@ private fun buildContentIndex(product: ProductInfo, articles: List<Article2>): S
 private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, article: OneArticle ) {
     var fileName = repaireDirName(article.article_title)
     if (File("${workspace}/${fileName}.html").exists()) {
-        println("${fileName} has downloaded..")
+        logger.info("${fileName} has downloaded..")
         return
     }
 
@@ -193,40 +199,17 @@ private fun html2xhtml(workspace: String, htmlContent: String, fileName: String,
     File(workspace).mkdirs()
     document.outputSettings().syntax(Document.OutputSettings.Syntax.xml)
     File("${workspace}/${fileName}.html").writeText(document.html())
-    println("save to ${workspace}/${fileName}.html")
+    logger.info("save to ${workspace}/${fileName}.html")
 }
 
 private fun productInfo(id: Int): ProductInfo {
     var response = HttpClient().post(
-        "https://apptime.geekbang.org/api/time/serv/v3/column/info",
-        "{\"product_id\":${id},\"with_recommend_article\":true}\n",
+        "https://time.geekbang.org/serv/v3/column/info",
+        "{\"product_id\":${id},\"with_recommend_article\":true}",
         object : TypeReference<GResponse<ProductInfo>>() {}
     )
     return response.data!!
 }
-
-
-private fun product(): GResponse<Data> {
-    var reqeust = LearnRequest(
-        size = 10,
-        last_learn = 1,
-
-        desc = true,
-        expire = 1,
-        with_learn_count = 1,
-        prev = 0,
-        type = "",
-        sort = 1,
-        learn_status = 0,
-    )
-    var resp = HttpClient().post(
-        "https://apptime.geekbang.org/api/time/serv/v3/learn/product",
-        reqeust,
-        object : TypeReference<GResponse<Data>>() {}
-    )
-    return resp
-}
-
 
 private fun articles(productId: Int): GResponse<Article2Data> {
     var request = ArticlesRequest(
@@ -238,7 +221,7 @@ private fun articles(productId: Int): GResponse<Article2Data> {
     )
 
     return HttpClient().post(
-        "https://apptime.geekbang.org/api/time/serv/v1/column/articles",
+        "https://time.geekbang.org/serv/v1/column/articles",
         request,
         object : TypeReference<GResponse<Article2Data>>() {}
     )
@@ -246,7 +229,7 @@ private fun articles(productId: Int): GResponse<Article2Data> {
 
 private fun oneArticles(articleId: Int): GResponse<OneArticle> {
     return HttpClient().post(
-        "https://apptime.geekbang.org/api/time/serv/v1/article",
+        "https://time.geekbang.org/serv/v1/article",
         mapOf("id" to articleId),
         object : TypeReference<GResponse<OneArticle>>() {}
     )
@@ -322,6 +305,7 @@ private fun downloadVideo(productWorkspace: String, article: OneArticle, m3u8Url
     File(baseDir).mkdirs()
     var m3u8File = File(baseDir + "base.m3u8")
     if (m3u8File.exists()) {
+        logger.info("${title} has downloaded..")
         return
     }
 
