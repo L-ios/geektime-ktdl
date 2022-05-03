@@ -13,8 +13,16 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.io.FileOutputStream
+import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.logging.Logger
 
 open class HttpClient {
+
+    var logger = Logger.getLogger("HttpClient")
+
     open fun <R, S> post(url: String, body: R, respClass: TypeReference<S>): S {
         var requestBody: RequestBody
         if (body is String) {
@@ -23,9 +31,31 @@ open class HttpClient {
             requestBody = kotlinMapper.writeValueAsBytes(body).toRequestBody("application/json".toMediaTypeOrNull())
         }
 
-        val request: Request = Request.Builder().url(url).headers(headers).post(requestBody).build()
-        val response = client.newCall(request).execute()
-        var content : String = response.body?.string()!!
+        var request: Request = Request.Builder().url(url).headers(headers).post(requestBody).build()
+        var content = ""
+        var retry = 0;
+        var retryMap = mapOf(
+            0 to 1L,
+            1 to 10L,
+            2 to 30L,
+            3 to 60L,
+            4 to 15L * 60,
+        )
+        var random = Random()
+        while (true) {
+            val response = client.newCall(request).execute()
+            content = response.body?.string()!!
+            if (content.trim().length != 0) {
+                break
+            }
+            logger.warning("---------- has error code: ${response.code} , sleep ${retryMap.get(retry)} content: ${content}")
+
+            var header = Headers.Builder().addAll(headers).add("User-Agent",
+                "PostmanRuntime/7.${random.nextInt(1000)}.${random.nextInt(100)}").build()
+            request = Request.Builder().url(url).headers(header).post(requestBody).build()
+            TimeUnit.SECONDS.sleep(retryMap.get(retry++)!!)
+            retry %= 5
+        }
         try {
 //            var readTree = kotlinMapper.readTree(content)
             var readValue = kotlinMapper.readValue(content, respClass)
@@ -34,8 +64,8 @@ open class HttpClient {
             }
             return readValue
         } catch (e: JsonMappingException) {
-            println(content)
-            throw e;
+            logger.severe("----------------------------------------------has json mapping exception ")
+            throw e
         }
     }
 
@@ -46,16 +76,46 @@ open class HttpClient {
     }
 
     open fun get(url: String): ByteArray? {
-        Request.Builder().url(url).build()
-        val i = 3;
-        while (true) {
+        logger.info("download url: ${url}")
+        var i = 30
+        var exc: Exception = Exception("download failed")
+        while (i >= 0) {
+            i--
             try {
                 var response = client.newCall(Request.Builder().url(url).build()).execute()
                 return response.body?.bytes()
             } catch (e: Exception) {
-                if (i > 0) {
-                    continue
-                } else {
+                exc = e
+                if (i < 0) {
+                    throw e;
+                }
+            }
+        }
+        throw exc
+    }
+
+    open fun downloadFile(url: String, filePath: String) {
+        logger.info("download url: ${url} to file: ${filePath}")
+        var i = 30
+        while (i >= 0) {
+            i--
+            try {
+                File(filePath).deleteOnExit()
+                var response = client.newCall(Request.Builder().url(url).build()).execute()
+                var byteStream = response.body!!.byteStream()
+                var outputStream = FileOutputStream(filePath)
+
+                val buff = ByteArray(1024 * 4)
+                while (true) {
+                    val readed = byteStream.read(buff)
+                    if (readed == -1) {
+                        break
+                    }
+                    outputStream.write(buff, 0, readed)
+                }
+                return
+            } catch (e: Exception) {
+                if (i < 0) {
                     throw e;
                 }
             }
@@ -87,7 +147,7 @@ open class HttpClient {
             get() = Headers.Builder()
                 .add(
                     "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36 Edg/99.0.1150.46"
+                    "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36 Edg/101.0.495"
                 )
                 .add("Accept", "application/json, text/plain, */*")
                 .add("Origin", "https://time.geekbang.org")
