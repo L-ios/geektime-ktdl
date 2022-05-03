@@ -3,7 +3,6 @@ package io.github.lionseun
 import com.fasterxml.jackson.core.type.TypeReference
 import io.github.lionseun.client.HttpClient
 import io.github.lionseun.domain.request.ArticlesRequest
-import io.github.lionseun.domain.request.LearnRequest
 import io.github.lionseun.domain.request.MinProductInfoData
 import io.github.lionseun.domain.response.*
 import org.jsoup.Jsoup
@@ -17,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.logging.Logger
 
 var logger = Logger.getLogger("geektime_dl")
+var random = Random()
 
 fun main() {
     var workspace = "/data/EData/temp"
@@ -29,6 +29,7 @@ fun main() {
             var product = productInfo(productId)
             downloader(workspace, product)
             latch.countDown()
+        File("${workspace}/downloaded").appendText("${productId}\n")
         }
     }
     latch.await(3, TimeUnit.DAYS)
@@ -48,16 +49,11 @@ fun downloader(workspace: String, product: ProductInfo) {
     var chapters = articles(product.id)
     saveProductIntro(productWorkspace, product, chapters.data.list)
     for (article2 in chapters.data.list) {
-        var oneArticles = oneArticles(article2.id).data
-        logger.info("start download " + product.id + " -> " + product.title + " -> " +oneArticles.id + " -> " + oneArticles.article_title)
+        logger.info("start download ${product.id} : ${product.title} -> ${article2.id} : ${article2.article_title}")
         if (product.is_video) {
-            var m3u8Url = ""
-            if (oneArticles.hls_videos is Map<*, *>) {
-                m3u8Url = (oneArticles.hls_videos as Map<String, Map<String, *>>).get("hd")!!.get("url").toString()
-            }
-            downloadVideo(productWorkspace, oneArticles, m3u8Url)
+            downloadVideo(productWorkspace, article2)
         } else {
-            saveArticleContent2xHtml(productWorkspace, product, oneArticles)
+            saveArticleContent2xHtml(productWorkspace, product, article2)
         }
     }
 }
@@ -121,13 +117,13 @@ private fun buildContentIndex(product: ProductInfo, articles: List<Article2>): S
     }
 }
 
-private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, article: OneArticle ) {
-    var fileName = repaireDirName(article.article_title)
+private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, article2: Article2 ) {
+    var fileName = repaireDirName(article2.article_title)
     if (File("${workspace}/${fileName}.html").exists()) {
         logger.info("${fileName} has downloaded..")
         return
     }
-
+    var article = oneArticles(article2.id).data
     // xhtml 还有一些 img 结束符有问题
     var htmlContent = """
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
@@ -175,24 +171,57 @@ private fun saveArticleContent2xHtml(workspace: String, product: ProductInfo, ar
 private fun html2xhtml(workspace: String, htmlContent: String, fileName: String, is_video: Boolean=false) {
     val client = HttpClient()
     val document = Jsoup.parse(htmlContent)
-    var fileIndex = AtomicInteger()
 
     document.select("img").forEach {
         val imgUrl = it.attr("src")
+        if (!imgUrl.startsWith("https://")) {
+            logger.warning("wrong url: ${imgUrl}")
+            return
+        }
         // 文章名字 + index
         val downloaded = client.get(imgUrl)
         it.attr("src", "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
         it.attr("origin-src", imgUrl)
     }
 
-    fileIndex.set(0)
+    var mp4FileIndex = AtomicInteger()
+    var m3u8DirIndex = AtomicInteger()
+    val mp4Dir = "${workspace}/mp4"
+    val m3u8Dir = "${workspace}/m3u8"
     if (!is_video) {
         document.select("source").forEach {
-            val mp3Url = it.attr("src")
-            val downloaded = client.get(mp3Url)
+            val mediaUrl = it.attr("src")
+            if (mediaUrl.length == 0) {
+                return
+            }
+
             // 文章名字 + index
-            it.attr("src", "data:audio/mpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
-            it.attr("origin-src", mp3Url)
+            if (mediaUrl.endsWith(".m3u8")) {
+                File(m3u8Dir).mkdirs()
+                val m3u8BaseDir = "${fileName}-${m3u8DirIndex.getAndIncrement()}"
+                File("${m3u8Dir}/${m3u8BaseDir}").mkdirs()
+                val m3u8FileName = "${m3u8BaseDir}/base.m3u8"
+                logger.info("save to ${m3u8Dir}/${m3u8FileName}")
+                // 需要解析m3u8
+                downloadm3u8(mediaUrl, "${m3u8Dir}/${m3u8BaseDir}/")
+                client.downloadFile(mediaUrl, "${m3u8Dir}/${m3u8FileName}")
+                it.attr("src", "./m3u8/${m3u8FileName}")
+            } else if (mediaUrl.endsWith(".mp4")) {
+                File(mp4Dir).mkdirs()
+                val mp4FileName = "${fileName}-${mp4FileIndex.getAndIncrement()}.mp4"
+                logger.info("save to ${mp4Dir}/${mp4FileName}")
+                client.downloadFile(mediaUrl, "${mp4Dir}/${mp4FileName}")
+                it.attr("src", "./mp4/${mp4FileName}")
+            } else if (mediaUrl.endsWith(".mp3")) {
+                val downloaded = client.get(mediaUrl)
+                it.attr("src", "data:audio/mpeg;base64," + Base64.getEncoder().encodeToString(downloaded))
+            } else {
+                logger.severe("url: ${mediaUrl} can not parse")
+            }
+            it.attr("origin-src", mediaUrl)
+        }
+        document.select("video").forEach {
+            it.attr("width", "800")
         }
     }
 
@@ -205,7 +234,7 @@ private fun html2xhtml(workspace: String, htmlContent: String, fileName: String,
 private fun productInfo(id: Int): ProductInfo {
     var response = HttpClient().post(
         "https://time.geekbang.org/serv/v3/column/info",
-        "{\"product_id\":${id},\"with_recommend_article\":true}",
+        mapOf("product_id" to id, "with_recommend_article" to true),
         object : TypeReference<GResponse<ProductInfo>>() {}
     )
     return response.data!!
@@ -228,9 +257,15 @@ private fun articles(productId: Int): GResponse<Article2Data> {
 }
 
 private fun oneArticles(articleId: Int): GResponse<OneArticle> {
+    TimeUnit.SECONDS.sleep(random.nextInt(5).toLong())
     return HttpClient().post(
         "https://time.geekbang.org/serv/v1/article",
-        mapOf("id" to articleId),
+        mapOf(
+            "id" to articleId,
+            "include_neighbors" to true,
+            "is_freelyread" to true,
+            "reverse" to false
+        ),
         object : TypeReference<GResponse<OneArticle>>() {}
     )
 }
@@ -241,6 +276,7 @@ private fun m3u8(url: String): String? {
 
 private fun repaireDirName(dirName: String): String {
     return dirName.trim().replace("|", "｜")
+        .replace("\t", " ")
         .replace(":", "：")
         .replace("*", "＊")
         .replace("?", "？")
@@ -298,8 +334,8 @@ private fun videoContent(article: OneArticle) : String{
 }
 
 
-private fun downloadVideo(productWorkspace: String, article: OneArticle, m3u8Url: String) {
-    val title = article.article_title
+private fun downloadVideo(productWorkspace: String, article2: Article2) {
+    val title = article2.article_title
     // 使用全角对目录名进行修复 :*?"<>|
     var baseDir ="${productWorkspace}/${repaireDirName(title)}/"
     File(baseDir).mkdirs()
@@ -309,23 +345,35 @@ private fun downloadVideo(productWorkspace: String, article: OneArticle, m3u8Url
         return
     }
 
+    var article = oneArticles(article2.id).data
+    if (article.hls_videos is Map<*, *>) {
+        val m3u8Url = (article.hls_videos as Map<String, Map<String, *>>).get("hd")!!.get("url").toString()
+        val m3u8Content = downloadm3u8(m3u8Url, baseDir)
+        var htmlContent = videoContent(article)
+        html2xhtml(baseDir, htmlContent, "index", true)
+        m3u8File.writeText(m3u8Content)
+    } else {
+        logger.severe("cat not download video to ${title}")
+    }
+}
+
+private fun downloadm3u8(m3u8Url: String, baseDir: String): String {
     var content = m3u8(m3u8Url) // 关键的url mp4的
-    val baseUrl = m3u8Url.substring(0, m3u8Url.lastIndexOf("/")+1)
+    val baseUrl = m3u8Url.substring(0, m3u8Url.lastIndexOf("/") + 1)
     val sb = StringBuilder()
     for (line in content!!.lines()) {
         if (line.endsWith(".ts")) {
             var content = HttpClient().get(baseUrl + line)
-            File(baseDir +  line).writeBytes(content!!)
+            File(baseDir + line).writeBytes(content!!)
         } else if (line.contains("https")) {
-            var url = line.substring(line.indexOf("\"")+ 1, line.length -1)
+            var url = line.substring(line.indexOf("\"") + 1, line.length - 1)
             var sec = HttpClient().get(url)
+
             File(baseDir + "aes.key").writeBytes(sec!!)
             sb.appendLine(line.replace(url, "./aes.key"))
             continue
         }
         sb.appendLine(line)
     }
-    var htmlContent = videoContent(article)
-    html2xhtml(baseDir, htmlContent, "index", true)
-    m3u8File.writeText(sb.toString())
+    return sb.toString()
 }
