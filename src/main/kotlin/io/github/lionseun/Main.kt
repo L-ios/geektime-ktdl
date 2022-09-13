@@ -3,7 +3,6 @@ package io.github.lionseun
 import com.fasterxml.jackson.core.type.TypeReference
 import io.github.lionseun.client.HttpClient
 import io.github.lionseun.domain.request.ArticlesRequest
-import io.github.lionseun.domain.request.MinProductInfoData
 import io.github.lionseun.domain.response.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -19,17 +18,20 @@ var logger = Logger.getLogger("geektime_dl")
 var random = Random()
 
 fun main() {
-    var workspace = "/data/EData/temp"
+    var workspace = "/data/EData/wxgeektime"
+//    workspace = "~/bwxgeektime_final"
+    println(File(workspace).canonicalFile)
     var productIds = getProductIds()
     var threadpool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     var latch = CountDownLatch(productIds.size)
     for (productId in productIds.shuffled()) {
         threadpool.submit {
-            logger.info("download ${productId}")
+
             var product = productInfo(productId)
+            logger.info("download ${productId},${product.title}")
             downloader(workspace, product)
             latch.countDown()
-        File("${workspace}/downloaded").appendText("${productId}\n")
+            File("${workspace}/downloaded").appendText("${productId}, ${product.title}, ${product.is_finish}\n")
         }
     }
     latch.await(3, TimeUnit.DAYS)
@@ -38,9 +40,9 @@ fun getProductIds(): List<Int>{
     var content = """
         {"label_id":0,"type":0}
     """.trimIndent()
-    var resp = HttpClient().post("https://time.geekbang.org/serv/v3/lecture/list", content,
-        object : TypeReference<GResponse<MinProductInfoData>>() {})
-    return resp.data.list.filter { it.in_pvip == 1 }.reversed().map { it.pid }.toList()
+    var resp = HttpClient().post("https://time.geekbang.org/serv/v1/column/label_skus", content,
+        object : TypeReference<GResponse<SkuData>>() {})
+    return resp.data.list.filter { it.in_pvip == 1 }.reversed().map { it.column_sku }.toList()
 }
 
 fun downloader(workspace: String, product: ProductInfo) {
